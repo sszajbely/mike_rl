@@ -1,0 +1,57 @@
+Model:
+
+self.relu = nn.ReLU()
+self.device = device
+
+
+self.initial = nn.Sequential(
+    nn.Conv2d(5, 8, kernel_size=3, padding=1, device=device),
+    nn.ReLU(),
+    nn.Conv2d(8, 8, kernel_size=1, device=device),
+)
+
+self.down1 = nn.Sequential(
+    nn.Conv2d(8, 8, kernel_size=1, device=device),
+    nn.ReLU(),
+    nn.Conv2d(8, 12, kernel_size=3, padding=1, device=device),
+    nn.AdaptiveMaxPool2d((5, 5))
+)
+
+self.down2 = nn.Sequential(
+    nn.Conv2d(12, 12, kernel_size=1, device=device),
+    nn.ReLU(),
+    nn.Conv2d(12, 20, kernel_size=3, padding=1, device=device),
+    nn.AdaptiveMaxPool2d((3, 3))
+)
+
+self.up1 = nn.Sequential(
+    nn.Upsample(size=(5, 5)),
+    nn.Conv2d(20, 20, kernel_size=1, device=device),
+    nn.ReLU(),
+    nn.Conv2d(20, 12, kernel_size=3, padding=1, device=device),
+)
+
+# The up2 and final layer need more channels because of the skip connections
+
+self.up2 = nn.Sequential(
+    nn.Upsample(size=(9, 9)),
+    nn.Conv2d(24, 24, kernel_size=1, device=device),
+    nn.ReLU(),
+    nn.Conv2d(24, 8, kernel_size=3, padding=1, device=device),
+)
+
+self.final = nn.Conv2d(16, 3, kernel_size=1, device=device)
+
+
+
+-----------------------------------------
+
+Reward: 3 * total_pieces + 2 * safe_pieces
+
+Other hyperparams:
+
+TRANSITION_HISTORY_SIZE = 500  # keep only ... last transitions
+BATCH_SIZE = 64
+LEARNING_RATE = 0.0005
+TARGET_UPDATE_FREQUENCY = 100 # In rounds
+GAMMA = 0.4

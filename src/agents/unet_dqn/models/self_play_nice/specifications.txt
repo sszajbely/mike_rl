@@ -1,0 +1,65 @@
+Model:
+
+    self.relu = nn.ReLU()
+    self.device = device
+
+
+    self.initial = nn.Sequential(
+        nn.Conv2d(5, 8, kernel_size=3, padding=1, device=device),
+        nn.ReLU(),
+        nn.Conv2d(8, 8, kernel_size=1, device=device),
+    )
+
+    self.down1 = nn.Sequential(
+        nn.Conv2d(8, 8, kernel_size=1, device=device),
+        nn.ReLU(),
+        nn.Conv2d(8, 12, kernel_size=3, padding=1, device=device),
+        nn.AdaptiveMaxPool2d((5, 5))
+    )
+
+    self.down2 = nn.Sequential(
+        nn.Conv2d(12, 12, kernel_size=1, device=device),
+        nn.ReLU(),
+        nn.Conv2d(12, 20, kernel_size=3, padding=1, device=device),
+        nn.AdaptiveMaxPool2d((3, 3))
+    )
+
+    self.up1 = nn.Sequential(
+        nn.Upsample(size=(5, 5)),
+        nn.Conv2d(20, 20, kernel_size=1, device=device),
+        nn.ReLU(),
+        nn.Conv2d(20, 12, kernel_size=3, padding=1, device=device),
+    )
+
+    # The up2 and final layer need more channels because of the skip connections
+
+    self.up2 = nn.Sequential(
+        nn.Upsample(size=(9, 9)),
+        nn.Conv2d(24, 24, kernel_size=1, device=device),
+        nn.ReLU(),
+        nn.Conv2d(24, 8, kernel_size=3, padding=1, device=device),
+    )
+
+    self.final = nn.Conv2d(16, 2, kernel_size=1, device=device)
+
+
+def forward(self, x):
+    out = self.relu(self.initial(x))
+    down1 = self.relu(self.down1(out))
+    down2 = self.relu(self.down2(down1))
+    up1 = torch.cat([down1, self.relu(self.up1(down2))], dim=1)
+    up2 = torch.cat([out, self.relu(self.up2(up1))], dim=1)
+    out = self.final(up2)
+    return out
+
+Reward: total_pieces
+
+Other hyperparams:
+
+TRANSITION_HISTORY_SIZE = 5000  # keep only ... last transitions
+BATCH_SIZE = 64
+LEARNING_RATE = 0.0005
+TARGET_UPDATE_FREQUENCY = 1000 # In rounds
+GAMMA = 0.9
+
+Averaging 23-24 points against rule based agents, trained for 1000 steps
