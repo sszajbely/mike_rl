@@ -60,7 +60,8 @@ class MikeWorld():
             #         agent.refresh_knowledge()
 
             waypoint = 0
-            notified_waypoint = [0, 0, 0, 0]
+            old_notified_waypoint = [0, 0, 0, 0]
+            new_notified_waypoint = [0, 0, 0, 0]
             old_boards = [None for _ in range(4)]
             old_actions = [None for _ in range(4)]
             new_boards = [None for _ in range(4)]
@@ -87,9 +88,11 @@ class MikeWorld():
                         old_boards, 
                         old_actions, 
                         new_boards, 
-                        [{ "waypoint": notified_waypoint[i] < waypoint } for i in range(4)]
+                        [{ "waypoint": old_notified_waypoint[i] < waypoint } for i in range(4)],
+                        [{ "waypoint": new_notified_waypoint[i] < waypoint } for i in range(4)]
                     )
-                notified_waypoint[self.next_player - 1] = waypoint
+                old_notified_waypoint[self.next_player - 1] = new_notified_waypoint[self.next_player - 1]
+                new_notified_waypoint[self.next_player - 1] = waypoint
                 old_boards[self.next_player - 1] = self.board.copy()
                 to_field, from_field = self.agents[self.next_player - 1].act(self.board.copy())
                 if self.verbose:
@@ -125,18 +128,19 @@ class MikeWorld():
                 if steps > 1000:
                     print("Game is taking too long")
                     break
-
+            game_scores = [np.sum(self.board == i + 1) for i in range(4)]
+            max_score = max(game_scores)
             if self.has_player or self.verbose:
                 print("--------------------")
                 print("Scores:")
                 for i, agent in enumerate(self.agents):
-                    print(f"Player {agent.player} ({agent.__class__.__name__}, id: {agent.id}): {np.sum(self.board == i + 1)}")
+                    print(f"Player {agent.player} ({agent.__class__.__name__}, id: {agent.id}): {game_scores[i]}")
             for i, agent in enumerate(self.agents):
                 if agent.training:
                     end_board = self.board.copy()
-                    agent.train(old_boards, old_actions, [end_board for i in range(4)], { "game_end": True })
+                    agent.train(old_boards, old_actions, [end_board for i in range(4)], [{} for i in range(4)], [{ "game_end": game_scores[i] == max_score } for i in range(4)])
                     agent.round_end(end_board, old_actions[agent.player - 1], round)
-                scores[agent.index].append(np.sum(self.board == agent.player))
+                scores[agent.index].append(game_scores[agent.player - 1])
             elapsed_time = (time.time_ns() - start_time) / 1e9
             estimated_time = elapsed_time / round * self.n_rounds
             remaining_time = estimated_time - elapsed_time

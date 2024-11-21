@@ -1,0 +1,80 @@
+class UNet(nn.Module):
+    """
+    Implements a UNet architecture.
+    Going from input 5 channels 9x9 to ouput 3 channels 9x9.
+    Using inbetween steps of 5x5 and 3x3.
+    """
+    def __init__(
+            self, 
+            device: str = "cpu"
+        ):
+        super(UNet, self).__init__()
+        
+        self.relu = nn.ReLU()
+        self.device = device
+
+
+        self.initial = nn.Sequential(
+            nn.Conv2d(5, 8, kernel_size=3, padding=1, device=device),
+            nn.ReLU(),
+            nn.Conv2d(8, 8, kernel_size=1, device=device),
+        )
+
+        self.down1 = nn.Sequential(
+            nn.Conv2d(8, 8, kernel_size=1, device=device),
+            nn.ReLU(),
+            nn.Conv2d(8, 12, kernel_size=3, padding=1, device=device),
+            nn.MaxPool2d(kernel_size=5, stride=1, padding=0) # 5x5
+        )
+
+        self.down2 = nn.Sequential(
+            nn.Conv2d(12, 12, kernel_size=1, device=device),
+            nn.ReLU(),
+            nn.Conv2d(12, 20, kernel_size=3, padding=1, device=device),
+            nn.MaxPool2d(kernel_size=3, stride=1, padding=0) # 3x3
+        )
+    
+        self.up1 = nn.Sequential(
+            nn.Upsample(size=(5, 5)),
+            nn.Conv2d(20, 20, kernel_size=1, device=device),
+            nn.ReLU(),
+            nn.Conv2d(20, 12, kernel_size=3, padding=1, device=device),
+        )
+
+        # The up2 and final layer need more channels because of the skip connections
+
+        self.up2 = nn.Sequential(
+            nn.Upsample(size=(9, 9)),
+            nn.Conv2d(24, 24, kernel_size=1, device=device),
+            nn.ReLU(),
+            nn.Conv2d(24, 8, kernel_size=3, padding=1, device=device),
+        )
+
+        self.final = nn.Conv2d(16, 2, kernel_size=1, device=device)
+
+
+    def forward(self, x):
+        out = self.relu(self.initial(x))
+        down1 = self.relu(self.down1(out))
+        down2 = self.relu(self.down2(down1))
+        up1 = torch.cat([down1, self.relu(self.up1(down2))], dim=1)
+        up2 = torch.cat([out, self.relu(self.up2(up1))], dim=1)
+        out = self.final(up2)
+        return out
+
+Reward: Now following the theory, so r_t' = r_t + f(s_t) - f(s_t-1) (where r_t is the real reward, f(s) gives the auxiliary reward based on the state)
+Now sum r_t' = sum r_t + f(s_T) - f(s_0). So the rewards are set such that f(s_T) - f(s_0) = 0.
+Here the reward is simply the number of pieces in the state. There are waypoints (25%, 50% etc of board full), where the pieces have higher weight.
+The final reward is also the number of pieces. I've experimented with a binary won/lost reward, but that was hard to learn for the agent, and having more pieces automatically wins the game, so it's not a problem here.
+
+Other hyperparams:
+
+TRANSITION_HISTORY_SIZE = 5000  # keep only ... last transitions
+BATCH_SIZE = 64
+LEARNING_RATE = 0.0001
+TARGET_UPDATE_FREQUENCY = 3000 # In rounds
+GAMMA = 0.99
+
+Training: 650 steps against 3 rule based agents (loss became unstable after that)
+
+Averaging 25 points against rule based agents

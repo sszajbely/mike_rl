@@ -13,7 +13,7 @@
             "args": [
                 "--train=4",
                 // "--verbose",
-                "--n_rounds=2000",
+                "--n_rounds=1500",
                 // "--spectate",
                 // "--agents dqn dqn dqn dqn"
             ]

@@ -12,7 +12,7 @@ class RuleBasedAgent(Agent):
         for move in valid_moves:
             new_board = board.copy()
             make_move(new_board, self.player, *move)
-            score = self.recursive_score(new_board, calculate_next_player(self.player), 1)
+            score = self.recursive_score(new_board, calculate_next_player(self.player), 0)
             scores.append((score, move))
 
         scores = sorted(scores, key=lambda x: x[0], reverse=True)

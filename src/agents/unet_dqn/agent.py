@@ -9,9 +9,10 @@ import matplotlib.pyplot as plt
 import os
 
 TRANSITION_HISTORY_SIZE = 5000  # keep only ... last transitions
-BATCH_SIZE = 64
-LEARNING_RATE = 0.0005
-TARGET_UPDATE_FREQUENCY = 3000 # In rounds
+BATCH_SIZE = 128
+LEARNING_RATE = 0.001
+TARGET_UPDATE_FREQUENCY = 500 # In rounds
+TARGET_UPDATE_ROUGHNESS = 0.05
 GAMMA = 0.99
 
 base_path = "src/agents/unet_dqn"
@@ -33,42 +34,42 @@ class UNet(nn.Module):
 
 
         self.initial = nn.Sequential(
-            nn.Conv2d(5, 8, kernel_size=3, padding=1, device=device),
+            nn.Conv2d(5, 16, kernel_size=3, padding=1, device=device),
             nn.ReLU(),
-            nn.Conv2d(8, 8, kernel_size=1, device=device),
+            nn.Conv2d(16, 16, kernel_size=1, device=device),
         )
 
         self.down1 = nn.Sequential(
-            nn.Conv2d(8, 8, kernel_size=1, device=device),
+            nn.Conv2d(16, 16, kernel_size=1, device=device),
             nn.ReLU(),
-            nn.Conv2d(8, 12, kernel_size=3, padding=1, device=device),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1, device=device),
             nn.MaxPool2d(kernel_size=5, stride=1, padding=0) # 5x5
         )
 
         self.down2 = nn.Sequential(
-            nn.Conv2d(12, 12, kernel_size=1, device=device),
+            nn.Conv2d(32, 32, kernel_size=1, device=device),
             nn.ReLU(),
-            nn.Conv2d(12, 20, kernel_size=3, padding=1, device=device),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, device=device),
             nn.MaxPool2d(kernel_size=3, stride=1, padding=0) # 3x3
         )
     
         self.up1 = nn.Sequential(
             nn.Upsample(size=(5, 5)),
-            nn.Conv2d(20, 20, kernel_size=1, device=device),
+            nn.Conv2d(64, 64, kernel_size=1, device=device),
             nn.ReLU(),
-            nn.Conv2d(20, 12, kernel_size=3, padding=1, device=device),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1, device=device),
         )
 
         # The up2 and final layer need more channels because of the skip connections
 
         self.up2 = nn.Sequential(
             nn.Upsample(size=(9, 9)),
-            nn.Conv2d(24, 24, kernel_size=1, device=device),
+            nn.Conv2d(64, 64, kernel_size=1, device=device),
             nn.ReLU(),
-            nn.Conv2d(24, 8, kernel_size=3, padding=1, device=device),
+            nn.Conv2d(64, 16, kernel_size=3, padding=1, device=device),
         )
 
-        self.final = nn.Conv2d(16, 2, kernel_size=1, device=device)
+        self.final = nn.Conv2d(32, 2, kernel_size=1, device=device)
 
 
     def forward(self, x):
@@ -152,14 +153,15 @@ class UNetAgent(Agent):
 
     def act(self, board: np.ndarray) -> action_type:
         std_board, rotation_number = standardized_board(board, self.player)
-        valid_moves = get_valid_moves(std_board, 1)
-        if self.training and epsilon(0.8, 0, 250, self.rounds, self.resume_training) > np.random.rand():
-            move = valid_moves[np.random.randint(0, len(valid_moves))]
+        valid_moves = get_valid_moves_tensor(std_board, 1, self.device)
+        if self.training and epsilon(0.8, 0, 300, self.rounds, self.resume_training) > np.random.rand():
+            move = self.index_to_action(np.random.choice(np.argwhere(valid_moves.flatten().cpu().numpy() == 1).flatten()))
+            # move = valid_moves[np.random.randint(0, len(valid_moves))]
             return transform_move(move, 4 - rotation_number)
         oh_board = torch.tensor(onehot_board(std_board), dtype=torch.float).to(self.device).unsqueeze(0)
         with torch.no_grad():
             output = self.online_net(oh_board)
-            q_values = self.action_scores_from_output(output)
+            q_values = self.action_scores_from_output(output, valid_moves)
             # plt.figure(figsize=(8, 8))
             # plt.tight_layout()
             # plt.subplot(2, 2, 1)
@@ -171,50 +173,58 @@ class UNetAgent(Agent):
             # plt.colorbar()
             # plt.subplot(2, 2, 3)
             # rotated_from = np.rot90(output[0, 0].cpu().numpy(), 4 - rotation_number)
-            # plt.imshow(np.exp(np.log(rotated_from * (up_board == self.player))))
+            # plt.imshow(rotated_from * (up_board == self.player))
             # # plt.imshow(output[0, 0].cpu().numpy())
             # plt.title("From")
             # plt.tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
             # plt.subplot(2, 2, 4)
             # rotated_to = np.rot90(output[0, 1].cpu().numpy(), 4 - rotation_number)
-            # plt.imshow(np.exp(np.log(rotated_to * (up_board == 0))))
+            # plt.imshow(rotated_to * (up_board == 0))
             # # plt.imshow(output[0, 1].cpu().numpy())
             # plt.title("To")
             # plt.tick_params(axis='both', which='both', bottom=False, top=False, labelbottom=False, right=False, left=False, labelleft=False)
             # plt.show()
         # self.plot_inside(std_board, rotation_number)
+        
+        q_values = q_values.cpu().numpy()[0] # Only one batch in the act function
 
-        sorted_moves = np.argsort(q_values.cpu().numpy()[0])[::-1]
-        for move in sorted_moves:
-            action = self.index_to_action(move)
-            if action in valid_moves:
-                return transform_move(action, 4 - rotation_number)
+        if not self.training:
+            q_values[q_values == 0] = -np.inf
+            # Choose the move with the highest q value
+            move = self.index_to_action(np.argmax(q_values))
+            return transform_move(move, 4 - rotation_number)
 
-        # Choose the move from a softmax distribution, temperature given by the epsilon function
-        # if self.training and epsilon(0.8, 0, 35, self.rounds, self.resume_training):
-        #     q_values = q_values.cpu().numpy()[0] # Only one batch in the act function
-        #     valid_action_indices = q_values > 0
-        #     valid_q_values = q_values[valid_action_indices]
-        #     # Standardize the q values so near q values are more distinguishable
-        #     valid_q_values = (valid_q_values - np.average(valid_q_values)) / np.std(valid_q_values)
-        #     probabilities 
+        # Choose the move from a softmax distribution
+        valid_action_indices = q_values != 0
+        valid_q_values = q_values[valid_action_indices]
+        if len(valid_q_values) == 1:
+            move = self.index_to_action(int(np.argwhere(valid_action_indices)))
+            return transform_move(move, 4 - rotation_number)
+
+        # Standardize the q values so near q values are more distinguishable
+        valid_q_values = (valid_q_values - np.average(valid_q_values)) / np.std(valid_q_values)
+        temperature = 0.1
+        probabilities = np.exp(valid_q_values / temperature) / np.sum(np.exp(valid_q_values / temperature))
+        move_index = np.random.choice(np.arange(len(valid_q_values)), p=probabilities)
+        move = self.index_to_action(int(np.argwhere(valid_action_indices)[move_index]))
+        return transform_move(move, 4 - rotation_number)
 
 
 
-    def train(self, old_boards: list[np.ndarray], old_actions: list[action_type], new_boards: list[np.ndarray], events: list[event_dict_type]) -> None:
+    def train(self, old_boards: list[np.ndarray], old_actions: list[action_type], new_boards: list[np.ndarray], old_events: list[event_dict_type], new_events) -> None:
         for i in range(len(old_boards)) if self.use_collective_experience else [self.player - 1]:
             old_board, rotation_number = standardized_board(old_boards[i], i + 1)
             new_board, _ = standardized_board(new_boards[i], i + 1)
 
             old_action = transform_move(old_actions[i], rotation_number)
-
-            reward = self.calculate_reward(new_board, True, events)
+            reward = self.calculate_reward(old_board, new_board, old_events[i], new_events[i], True)
+            valid_moves = get_valid_moves_tensor(old_board, 1, self.device)
 
             new_board = torch.tensor(onehot_board(new_board), dtype=torch.float).to(self.device)
             old_board = torch.tensor(onehot_board(old_board), dtype=torch.float).to(self.device)
             reward = torch.tensor(reward, dtype=torch.float).to(self.device)
             action = torch.tensor(self.action_to_index(old_action), dtype=torch.long).to(self.device)
-            self.transitions.append((old_board, action, new_board, reward))
+            self.transitions.append((old_board, action, new_board, reward, valid_moves))
 
         if len(self.transitions) > TRANSITION_HISTORY_SIZE:
             self.transitions.pop(0)
@@ -226,22 +236,30 @@ class UNetAgent(Agent):
 
         batch = [self.transitions[i] for i in np.random.choice(len(self.transitions), batch_size, replace=False)]
 
-        old_states, actions, new_states, rewards = zip(*batch)
+        old_states, actions, new_states, rewards, valid_moves = zip(*batch)
 
         old_states = torch.stack(old_states)
         actions = torch.stack(actions)
         new_states = torch.stack(new_states)
         rewards = torch.stack(rewards)
+        valid_moves = torch.stack(valid_moves)
 
         old_q_values: torch.Tensor = self.action_scores_from_output(self.online_net(old_states))
         with torch.no_grad():
-            new_q_values = self.action_scores_from_output(self.target_net(new_states))
+            # Standard DQN
+            # new_q_values = self.action_scores_from_output(self.target_net(new_states))
+            # expected_new_q_values = rewards + GAMMA * torch.max(new_q_values, dim=1)[0]
 
-        expected_new_q_values = rewards + GAMMA * torch.max(new_q_values, dim=1)[0]
+            # Double DQN
+            online_q_values = self.action_scores_from_output(self.online_net(new_states), valid_moves)
+            online_q_values[online_q_values == 0] = -torch.inf
+            best_action_online = torch.argmax(online_q_values, dim=1)
+            new_q_values = self.action_scores_from_output(self.target_net(new_states))
+            expected_new_q_values = rewards + GAMMA * new_q_values.gather(1, best_action_online.unsqueeze(1)).squeeze(1)
 
         old_q_values = old_q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        loss = F.mse_loss(old_q_values, expected_new_q_values) / batch_size
+        loss = F.smooth_l1_loss(old_q_values, expected_new_q_values) / batch_size
 
         self.losses.append(loss.item())
         self.optimizer.zero_grad()
@@ -251,7 +269,12 @@ class UNetAgent(Agent):
         self.rounds += 1
 
         if self.rounds % TARGET_UPDATE_FREQUENCY == 0:
-            self.target_net.load_state_dict(self.online_net.state_dict())
+            target_state_dict = self.target_net.state_dict()
+            online_state_dict = self.online_net.state_dict()
+            new_target_state_dict = {}
+            for key in target_state_dict:
+                new_target_state_dict[key] = TARGET_UPDATE_ROUGHNESS * online_state_dict[key] + (1.0 - TARGET_UPDATE_ROUGHNESS) * target_state_dict[key]
+            self.target_net.load_state_dict(new_target_state_dict)
 
      
     def action_scores_from_output(self, nn_output: torch.Tensor, valid_moves: torch.Tensor|None = None) -> torch.Tensor:
@@ -292,29 +315,36 @@ class UNetAgent(Agent):
         )
 
 
-    def calculate_reward(self, board: np.ndarray, is_standardized: bool, events: event_dict_type) -> int:
+    def calculate_reward(self, old_board: np.ndarray, new_board: np.ndarray, old_events: event_dict_type, new_events: event_dict_type, is_standardized: bool) -> int:
+        old_reward = self.calculate_reward_for_state(old_board, old_events, is_standardized)
+        new_reward = self.calculate_reward_for_state(new_board, new_events, is_standardized)
+
+        real_reward = 0
+        if "game_end" in new_events.keys(): # Only the new events are relevant
+            real_reward = new_reward
+            # Subtract the last reward and add the first reward so that sum r' = sum r
+            real_reward -= new_reward # The last state's reward is the last reward
+            real_reward += (9 / 81) # The first state's reward is 9
+
+        # r_t' = r_t + f(s_t) - f(s_t-1), so sum r' = sum r + f(s_T) - f(s_0)
+        return real_reward + new_reward - old_reward
+
+    def calculate_reward_for_state(self, board: np.ndarray, events: event_dict_type, is_standardized: bool) -> int:
         player = self.player if not is_standardized else 1
-        player_pieces = np.argwhere(board == player)
+        total_pieces = len(np.argwhere(board == player)) / 81
 
-        total_pieces = len(player_pieces)
+        immediate_weight, waypoint_weight = 1, 0
 
-        immediate_weight, waypoint_weight, final_weight = 1, 0, 0
+        if "waypoint" in events.keys() and events["waypoint"]:
+            waypoint_weight = 2
 
-        total_pieces = total_pieces / 81
-
-        for event in events:
-            if event == "waypoint":
-                waypoint_weight = 2
-            elif event == "game_end":
-                final_weight = 4
-
-        return (immediate_weight * total_pieces + waypoint_weight * total_pieces + final_weight * total_pieces) / (immediate_weight + waypoint_weight + final_weight)
-
+        return (immediate_weight * total_pieces + waypoint_weight * total_pieces) / (immediate_weight + waypoint_weight)
     
     def round_end(self, board: np.ndarray, last_action: action_type, n_round: int) -> None:
         plt.switch_backend('agg')
         plt.figure()
         plt.plot(self.losses)
+        plt.grid(axis="y")
         plt.yscale("log")
         plt.savefig(f"{base_path}/outputs/agent_{self.id}/losses.png")
         plt.close()
@@ -322,7 +352,7 @@ class UNetAgent(Agent):
         self.scores.append((board == self.player).sum())
         plt.figure()
         plt.plot(self.scores)
-        plt.plot(np.convolve(self.scores, np.ones(20) / 20, mode="valid"))
+        plt.plot(np.convolve(self.scores, np.ones(50) / 50, mode="valid"))
         plt.ylim(0, 40)
         plt.yticks(range(0, 40, 5))
         plt.grid(axis="y")

@@ -23,7 +23,7 @@ class Agent:
     def act(self, board: np.ndarray, training: bool = False) -> action_type:
         raise NotImplementedError()
 
-    def train(self, old_board: np.ndarray, old_action: action_type, new_board: np.ndarray, events: event_dict_type) -> None:
+    def train(self, old_board: np.ndarray, old_action: action_type, new_board: np.ndarray, old_events: event_dict_type, new_events: event_dict_type) -> None:
         pass
     
     def round_end(self, board: np.ndarray, last_action: action_type, n_round: int) -> None:

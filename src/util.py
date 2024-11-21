@@ -3,7 +3,7 @@ import torch
 from typing import Literal
 
 event_type = Literal["waypoint", "game_end"]
-event_dict_type = dict[event_type, int]
+event_dict_type = dict[event_type, bool]
 action_type = tuple[tuple[int, int], tuple[int, int] | None]
 BOARD_SIZE = 9
 
@@ -97,7 +97,7 @@ def get_valid_moves(board: np.ndarray, player: int) -> list[action_type]:
                 valid_moves.append(((int(pos_2d[0]), int(pos_2d[1])), (int(row), int(col))))  # Extended move
 
     return valid_moves
-
+    
 def get_valid_moves_tensor(board: np.ndarray, player: int, device = "cpu") -> torch.Tensor:
     board = unpadded_board(board)
     valid_moves = torch.zeros((BOARD_SIZE * BOARD_SIZE, BOARD_SIZE * BOARD_SIZE + 1), device=device)
@@ -148,6 +148,14 @@ def onehot_board(board: np.ndarray):
     for i in range(5):
         onehot[i, :, :] = (real_board == i).astype(int)
     return onehot
+
+def unOnehot_board(onehot: np.ndarray):
+    return np.argmax(onehot, axis=0)
+
+def padded_board(board: np.ndarray):
+    padded = np.ones((BOARD_SIZE + 4, BOARD_SIZE + 4)) * -1
+    padded[2:2 + BOARD_SIZE, 2:2 + BOARD_SIZE] = board
+    return padded
 
 def standardized_board(board: np.ndarray, player: int) -> tuple[np.ndarray, int]:
     """
